@@ -1,0 +1,199 @@
+---
+title: "Анализ причин ухода сотрудников"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+---
+
+<style>
+.navbar {
+background-color:#FFFFFF;
+border-color:#FFFFFF;
+}
+.navbar-brand {
+color:black!important;
+}
+
+</style>
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(ggplot2)
+library(dplyr)
+library(tidymodels)
+library(themis)
+library(vip)
+library(ggpubr)
+library(flexdashboard)
+library(tidyverse)
+library(plotly)
+library(wordcloud2)
+library(crosstalk)
+library(DBI)
+library(RMariaDB)
+library(flexdashboard)
+library(ggplot2)
+library(DBI)
+library(RSQLite)
+
+library(DBI)
+library(RMariaDB)
+con = dbConnect(RMariaDB::MariaDB(), 
+                 user='studentminor', 
+                 password='DataMinorHSE!2020', 
+                 dbname='employee', 
+                 host='34.88.193.134',
+                 port = 3306)
+
+all = dbGetQuery(con, "SELECT EmployeeNumber, Department, EnvironmentSatisfaction, 
+                       JobRole, MonthlyIncome, YearsSinceLastPromotion, Attrition, Age, Gender, DistanceFromHome, Education, YearsAtCompany, JobInvolvement
+                       
+                       FROM portfolio INNER JOIN profile USING(EmployeeNumber)")
+
+high = all %>% filter((dbGetQuery(con, "SELECT EmployeeNumber, MonthlyIncome FROM portfolio"))$MonthlyIncome >= median((dbGetQuery(con, "SELECT EmployeeNumber, MonthlyIncome FROM portfolio"))$MonthlyIncome))
+
+outstanding_model = high %>% na.omit()
+outstanding_model$Department = as.factor(outstanding_model$Department)
+outstanding_model$EnvironmentSatisfaction = as.factor(outstanding_model$EnvironmentSatisfaction)
+outstanding_model$JobRole = as.factor(outstanding_model$JobRole)
+outstanding_model$Attrition = as.factor(outstanding_model$Attrition)
+outstanding_model$JobInvolvement = as.factor(outstanding_model$JobInvolvement)
+outstanding_model$Education = as.factor(outstanding_model$Education)
+outstanding_model$Gender = as.factor(outstanding_model$Gender)
+
+set.seed(24601)
+split = initial_split(outstanding_model, prop = 0.8)
+train = training(split)
+test = testing(split)
+
+
+log = logistic_reg(mode = 'classification') %>% set_engine('glm')
+
+ds_up = recipe( ~ ., data = train) %>%
+  step_upsample(Attrition) %>% 
+  prep(training = train, retain = TRUE) %>% 
+  bake(new_data = NULL)
+
+wf_log.up = workflow() %>% add_model(log) %>% add_formula(Attrition ~ .) %>% fit(ds_up)
+
+
+
+# Logistic Regression
+wf_log = workflow() %>% add_model(log) %>% add_formula(Attrition ~ .) %>% fit(train)
+predtest_log = predict(wf_log, test)
+accuracy_log = accuracy_vec(test$Attrition, predtest_log$.pred_class)
+
+predtrain_log = predict(wf_log, train)
+accuracy_log.tr = accuracy_vec(train$Attrition, predtrain_log$.pred_class)
+
+# ------------------------------------------------------------------------------
+
+# Tree
+tree = decision_tree(mode = 'classification') %>% set_engine('rpart')
+wf_tree = workflow() %>% add_model(tree) %>% add_formula(Attrition ~ .) %>% fit(train)
+predtest_tree = predict(wf_tree, test)
+accuracy_tree = accuracy_vec(test$Attrition, predtest_tree$.pred_class)
+
+predtrain_tree = predict(wf_tree, train)
+accuracy_tree.tr = accuracy_vec(train$Attrition, predtrain_tree$.pred_class)
+
+# ------------------------------------------------------------------------------
+
+# Random Forest
+rf = rand_forest(mode = 'classification', trees = 50) %>% set_engine('randomForest')
+wf_rf = workflow() %>% add_model(rf) %>% add_formula(Attrition ~ .) %>% fit(train)
+predtest_rf = predict(wf_rf, test)
+accuracy_rf = accuracy_vec(test$Attrition, predtest_rf$.pred_class)
+
+predtrain_rf = predict(wf_rf, train)
+accuracy_rf.tr = accuracy_vec(train$Attrition, predtrain_rf$.pred_class)
+
+#можно еще так
+#rf = rand_forest(mode = "classification") %>% set_engine("randomForest") %>% fit(Attrition ~ ., data = train)
+#predtest_rf = predict(rf$fit, test)
+#accuracy_rf = accuracy_vec(test$Attrition, predtest_rf)
+
+# ------------------------------------------------------------------------------
+
+# Boosting
+xgb = boost_tree(mode = "classification") %>% set_engine("xgboost") %>% fit(Attrition ~ ., data = train)
+predtest_xgb = predict(xgb, test)
+accuracy_xgb = accuracy_vec(test$Attrition, predtest_xgb$.pred_class)
+
+predtrain_xgb = predict(xgb, train)
+accuracy_xgb.tr = accuracy_vec(train$Attrition, predtrain_xgb$.pred_class)
+
+
+
+
+### ПРОВЕРКА ПОКАЗАТЕЛЕЙ МОДЕЛЕЙ, ВЫБОР МОДЕЛИ
+
+accuracy = c('Logistic Regression' = accuracy_log, 'Decision Tree' = accuracy_tree, 'Random Forest' = accuracy_rf, 'Boosting' = accuracy_xgb)
+accuracy.tr = c('Logistic Regression' = accuracy_log.tr, 'Decision Tree' = accuracy_tree.tr, 'Random Forest' = accuracy_rf.tr, 'Boosting' = accuracy_xgb.tr)
+
+ddd = data.frame('Accuracy_Test' = accuracy, 'Accuracy_Train' = accuracy.tr) %>% arrange(-accuracy)
+```
+
+```{r}
+#чорт было бы супер круто сделать слева крутящуюся штуку как на вайлдбериз, чтобы там в зависимости от изменения ВСЕХ ПЕРЕМЕННЫХ менялись графики.... но я так хочу спать..
+```
+
+
+```{r}
+#Inputs {.sidebar}
+#-------------------------------------
+
+#filter_slider("n", "DistanceFromHome", test, #~DistanceFromHome)
+```
+
+Column {data-width=700}
+-----------------------------------------------------------------------
+
+### Нововведения: улучшение окружающей обстановки + аренда квартир для сотрудников недалеко от офиса
+
+```{r}
+test_simulation = test
+test_simulation$DistanceFromHome = as.numeric(test_simulation$DistanceFromHome)
+test_simulation$DistanceFromHome = ifelse(test_simulation$DistanceFromHome>=5, 5, test_simulation$DistanceFromHome)
+
+test_simulation$DistanceFromHome = as.integer(test_simulation$DistanceFromHome)
+EnvironmentSatisfaction = case_when(test_simulation$EnvironmentSatisfaction == 'Low' ~ 'Very High',
+                                    test_simulation$EnvironmentSatisfaction == 'Medium' ~ 'Very High',
+                                    test_simulation$EnvironmentSatisfaction == 'High' ~ 'Very High',
+                                    test_simulation$EnvironmentSatisfaction == 'Very High' ~ 'Very High')
+
+test_simulation$EnvironmentSatisfaction = EnvironmentSatisfaction
+
+predTest = predict(wf_log.up, test_simulation)$.pred_class
+test4488 = test %>% rename(predTest = Attrition)
+
+#predTest = SharedData$new(predTest)
+#test4488 = SharedData$new(test4488)
+
+g = ggplot(NULL, aes(x = predTest)) + 
+geom_bar(data = data.frame(predTest), aes(fill = "после нововведений"), alpha = 1, col = 'white') +
+geom_bar(data = test4488, aes(fill = 'до нововведений'), alpha = 0, col = 'black') +
+scale_fill_manual(values = c("white", "#7E675E")) +
+guides(fill = guide_legend(title = "")) + 
+scale_x_discrete(labels = c('не увольняются', 'увольняются')) + theme_minimal() + xlab('') + ylab('')  + theme(text = element_text(size = 12))
+
+ggplotly(g)
+```
+
+Column
+-----------------------------------------------------------------------
+
+### Важность переменных в модели Linear Regression
+
+```{r fig.height=4.2,echo=FALSE,results='asis'}
+w = wf_log.up %>% extract_fit_parsnip() %>% vip(num_features = 5, aesthetics = list(fill = "#8593AE")) + theme_minimal() + theme(text = element_text(size = 10))
+
+ggplotly(w)
+```
+
+### Сравнение качества предсказаний моделей
+
+```{r fig.height=1.9,echo=FALSE,results='asis'}
+knitr::kable(ddd)
+```
